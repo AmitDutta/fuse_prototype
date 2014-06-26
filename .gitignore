@@ -21,4 +21,5 @@
 *.app
 
 # Temp files
+*.log
 *.*~

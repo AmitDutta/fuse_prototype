@@ -8,6 +8,7 @@
 #ifndef _LOG_H_
 #define _LOG_H_
 #include <stdio.h>
+#include <fuse.h>
 
 //  macro to log fields in structs.
 #define log_struct(st, field, format, typecast) \
@@ -21,4 +22,5 @@ void log_statvfs(struct statvfs *sv);
 void log_utime(struct utimbuf *buf);
 
 void log_msg(const char *format, ...);
+void log_fuse_context(struct fuse_context *context);
 #endif
