@@ -1,0 +1,3 @@
+gcc -Wall vfs.c log.c `pkg-config fuse --cflags --libs` -o vfs
+./vfs /tmp/test1/ /tmp/fuse/
+fusermount -u /tmp/fuse
