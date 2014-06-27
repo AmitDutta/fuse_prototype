@@ -23,10 +23,10 @@
 // maintain bbfs state in here
 #include <limits.h>
 #include <stdio.h>
-struct bb_state {
+struct vfs_state {
     FILE *logfile;
     char *rootdir;
 };
-#define BB_DATA ((struct bb_state *) fuse_get_context()->private_data)
+#define vfs_DATA ((struct vfs_state *) fuse_get_context()->private_data)
 
 #endif

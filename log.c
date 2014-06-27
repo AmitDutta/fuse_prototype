@@ -46,7 +46,7 @@ void log_msg(const char *format, ...)
     va_list ap;
     va_start(ap, format);
 
-    vfprintf(BB_DATA->logfile, format, ap);
+    vfprintf(vfs_DATA->logfile, format, ap);
 }
 
 // fuse context
@@ -73,8 +73,8 @@ void log_fuse_context(struct fuse_context *context)
     /** Private filesystem data */
     //	void *private_data;
     log_struct(context, private_data, %08x, );
-    log_struct(((struct bb_state *)context->private_data), logfile, %08x, );
-    log_struct(((struct bb_state *)context->private_data), rootdir, %s, );
+    log_struct(((struct vfs_state *)context->private_data), logfile, %08x, );
+    log_struct(((struct vfs_state *)context->private_data), rootdir, %s, );
 	
     /** Umask of the calling process (introduced in version 2.8) */
     //	mode_t umask;
