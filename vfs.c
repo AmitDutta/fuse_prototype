@@ -44,6 +44,8 @@
 #endif
 
 #include "log.h"
+#include <openssl/md5.h>
+
 
 // Report errors to logfile and give -errno to caller
 static int vfs_error(char *str)
@@ -415,6 +417,18 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
     return retstat;
 }
 
+char* get_md5_sum_formatted(unsigned char* md) {
+	char* str = malloc(sizeof(char) * (MD5_DIGEST_LENGTH*2));
+	int i,j;
+	for(i=0,j=0; i <MD5_DIGEST_LENGTH; i++) {
+		char ch[3];
+		sprintf(ch,"%02x",md[i]);
+		str[j++] = ch[0];
+		str[j++] = ch[1];
+    }
+    return str;
+}
+
 /** Write data to an open file
  *
  * Write should return exactly the number of bytes requested
@@ -425,26 +439,68 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
  */
 // As  with read(), the documentation above is inconsistent with the
 // documentation for the write() system call.
+
+int i = 0;
+uint64_t handle;
+int handle1;
+ mode_t create_mode;
 int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
 	     struct fuse_file_info *fi)
 {
-    int i,retstat = 0;
-    
-    log_msg("\nvfs_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
-	    path, buf, size, offset, fi);
-	
-    char *encrypted = malloc( sizeof(char) * (size) + 1);
-    for (i = 0; i < size; i++){
-		encrypted[i] = buf[i] + 5;
-    }
-    encrypted[i] = '\0';
-    // no need to get fpath on this one, since I work from fi->fh not the path
-    log_fi(fi);
-	
-    retstat = pwrite(fi->fh, encrypted, size, offset);
-    if (retstat < 0)
-	retstat = vfs_error("vfs_write pwrite");
-    
+	DIR *dp;
+	char fpath[PATH_MAX];
+	int retstat = 0;
+	//if (i == 0)
+	//{
+		i++;
+		int i, fd;
+		char result[MD5_DIGEST_LENGTH];
+		FILE *fp;
+		
+		log_msg("\nvfs_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
+			path, buf, size, offset, fi);
+		
+		char *encrypted = malloc( sizeof(char) * (size) + 1);
+		for (i = 0; i < size; i++){
+			encrypted[i] = buf[i] + 5;
+		}
+		encrypted[i] = '\0';
+		// no need to get fpath on this one, since I work from fi->fh not the path
+		log_fi(fi);
+		
+		retstat = pwrite(fi->fh, encrypted, size, offset);
+		if (retstat < 0)
+		retstat = vfs_error("vfs_write pwrite");
+		
+		char path_copy[strlen(path) + 40];
+		strcpy(path_copy, path);
+		//strcat(path_copy, path);
+		strcat(path_copy, "_hash");
+		log_msg(path_copy);	
+		
+		vfs_fullpath(fpath, path_copy);
+		log_msg("AFTER FULLPATHHHHH");
+		
+		handle1 = creat(fpath, create_mode);
+		log_msg("AFTER opendir");
+		if (dp == NULL)
+			retstat = vfs_error("ERROR IN CREATING HASH FILE");
+		handle= (intptr_t)dp;	
+	//}else{
+		i = 0;
+		MD5((unsigned char*) encrypted, sizeof(encrypted), result);
+		char* hash = get_md5_sum_formatted(result);
+		log_msg(hash);
+		//write(fd, hash, strlen(hash));
+		//retstat = pwrite(handle1, hash, sizeof(hash), 0);
+		off_t off = 0;
+		size_t size2 = (size_t)(strlen(hash));
+		int retstat2 = pwrite(handle1, hash, size2, off);
+		log_msg("AFTER second pwrite");
+		
+		if (retstat2 < 0)
+		retstat2 = vfs_error("vfs_write pwrite");
+	//}
     return retstat;
 }
 
@@ -848,12 +904,14 @@ int vfs_access(const char *path, int mask)
  *
  * Introduced in version 2.5
  */
+ 
+
 int vfs_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
     int retstat = 0;
     char fpath[PATH_MAX];
     int fd;
-    
+    create_mode = mode;
     log_msg("\nvfs_create(path=\"%s\", mode=0%03o, fi=0x%08x)\n",
 	    path, mode, fi);
     vfs_fullpath(fpath, path);
