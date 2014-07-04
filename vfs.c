@@ -45,6 +45,7 @@
 
 #include "log.h"
 #include <openssl/md5.h>
+#include <sys/stat.h>
 
 struct vfs_state *vfs_data;
 // Report errors to logfile and give -errno to caller
@@ -417,7 +418,7 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
     return retstat;
 }
 
-char* get_md5_sum_formatted(unsigned char* md) {
+char* get_md5_sum_formatted(char* md) {
 	char* str = malloc(sizeof(char) * (MD5_DIGEST_LENGTH*2));
 	int i,j;
 	for(i=0,j=0; i <MD5_DIGEST_LENGTH; i++) {
@@ -429,12 +430,68 @@ char* get_md5_sum_formatted(unsigned char* md) {
     return str;
 }
 
+void write_hash(const char *encrypted, const char * path){
+	int fd;
+	char result[MD5_DIGEST_LENGTH];
+	log_msg("-- In write_hash --\n");
+	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
+	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash")];
+	strcpy(path_copy, vfs_data->rootdir);
+	strcat(path_copy, path);
+	strcat(path_copy, "_hash");
+	log_msg(path_copy);
+	char* hash = get_md5_sum_formatted(result);
+	log_msg(hash);
+	
+	
+	//create hash directory if not exists
+	int i, j, k;
+	for (i = strlen(path_copy) - 1; i >= 0; --i){
+		if (path_copy[i] == '/') break;
+	}
+	int folder_length = strlen(path_copy) - i;
+	//printf("full_length %d, dir _length %d, file_length %d\n", strlen(fullpath), i, folder_length);
+	char folder[i + 1];
+	for (j = 0; j <= i; j++){
+		folder[j] = path_copy[j]; 
+	}
+	folder[j] = '\0';
+	//printf("Folder: %s\n", folder);
+	char file[folder_length - 1];
+	for (k = 0, j = i + 1; j < strlen(path_copy); ++j, ++k){
+		file[k] = path_copy[j];
+	}
+	file[k]='\0';
+	//printf("File: %s\n", file);
+	char hash_dir[strlen(folder) + strlen(".hash")];
+	strcpy(hash_dir, folder);
+	strcat(hash_dir, ".hash");
+	log_msg(hash_dir);
+	
+	struct stat st = {0};
+	if (stat(hash_dir, &st) == -1) {
+		mkdir(hash_dir, 0777);
+	}
+	//store the hash file in .hash directory
+	char hash_file_path [strlen(hash_dir) + strlen(file)];
+	strcpy(hash_file_path, hash_dir);
+	strcat(hash_file_path, "/");
+	strcat(hash_file_path, file);
+	log_msg("\n");
+	log_msg(hash_file_path);
+	log_msg("\n");
+	log_msg(file);
+	
+	fd = open(hash_file_path, O_RDWR | O_CREAT, 777);
+	if (fd < 0) log_msg("\nERROR IN OPENING"); 
+	write(fd, hash, strlen(hash));
+    log_msg("-- Finished hashing --");
+}
+
 int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
 	     struct fuse_file_info *fi)
 {
-    int i, fd, retstat = 0;
-    char result[MD5_DIGEST_LENGTH];
-    FILE *fp;
+    int i, retstat = 0;
     
     log_msg("\nvfs_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
@@ -450,28 +507,7 @@ int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
     retstat = pwrite(fi->fh, encrypted, size, offset);
     if (retstat < 0)
 	retstat = vfs_error("vfs_write pwrite");
-	
-	// Write the hash
-	log_msg("--In write --\n");
-	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
-	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash")];
-	strcpy(path_copy, vfs_data->rootdir);
-	strcat(path_copy, path);
-	strcat(path_copy, "_hash");
-	log_msg(path_copy);
-	char* hash = get_md5_sum_formatted(result);
-	log_msg(hash);
-	fd = open(path_copy, O_RDWR | O_CREAT, 777);
-	log_msg("\nFD: %d\n", fd);
-	if (fd < 0) log_msg("\nERROR IN OPENING"); 
-	write(fd, hash, strlen(hash));
-	//ssize_t n;
-	//write(fd,hash,n);
-	//fp=fopen(path_copy, "w+");
-	//if (fp == NULL) log_msg("FILE POINTER NULLLL");
-	//fwrite(hash, sizeof(char), sizeof(hash), fp);
-    //fclose(fp);
-    log_msg("finished hashing");
+	write_hash(encrypted, path);
     return retstat;
 }
 
