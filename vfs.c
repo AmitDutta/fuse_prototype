@@ -433,59 +433,53 @@ char* get_md5_sum_formatted(char* md) {
 void write_hash(const char *encrypted, const char * path){
 	int fd;
 	char result[MD5_DIGEST_LENGTH];
-	log_msg("-- In write_hash --\n");
+	log_msg("-- Inside write_hash --\n");
 	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
-	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash")];
+	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash") + 1];
 	strcpy(path_copy, vfs_data->rootdir);
 	strcat(path_copy, path);
 	strcat(path_copy, "_hash");
 	log_msg(path_copy);
+	
 	char* hash = get_md5_sum_formatted(result);
 	log_msg(hash);
 	
 	
 	//create hash directory if not exists
-	int i, j, k;
-	for (i = strlen(path_copy) - 1; i >= 0; --i){
-		if (path_copy[i] == '/') break;
-	}
-	int folder_length = strlen(path_copy) - i;
-	//printf("full_length %d, dir _length %d, file_length %d\n", strlen(fullpath), i, folder_length);
-	char folder[i + 1];
-	for (j = 0; j <= i; j++){
-		folder[j] = path_copy[j]; 
-	}
-	folder[j] = '\0';
-	//printf("Folder: %s\n", folder);
-	char file[folder_length - 1];
-	for (k = 0, j = i + 1; j < strlen(path_copy); ++j, ++k){
-		file[k] = path_copy[j];
-	}
-	file[k]='\0';
-	//printf("File: %s\n", file);
-	char hash_dir[strlen(folder) + strlen(".hash")];
-	strcpy(hash_dir, folder);
-	strcat(hash_dir, ".hash");
-	log_msg(hash_dir);
-	
+	int i,j,k;
+    for (i = strlen(path_copy); i >= 0; i--){
+        if (path_copy[i] == '/') break;
+    }
+    char folder[i + 1];
+    for (j = 0; j <= i; j++) {
+    char ch = path_copy[j];
+    folder[j] = ch;
+    }
+    folder[j] = '\0';
+    char final_folder[strlen(folder) + strlen(".hash") + 1];
+    strcpy(final_folder, folder);
+    strcat(final_folder, ".hash");
 	struct stat st = {0};
-	if (stat(hash_dir, &st) == -1) {
-		mkdir(hash_dir, 0777);
+	if (stat(final_folder, &st) == -1) {
+		mkdir(final_folder, 0777);
 	}
-	//store the hash file in .hash directory
-	char hash_file_path [strlen(hash_dir) + strlen(file)];
-	strcpy(hash_file_path, hash_dir);
-	strcat(hash_file_path, "/");
-	strcat(hash_file_path, file);
-	log_msg("\n");
-	log_msg(hash_file_path);
-	log_msg("\n");
-	log_msg(file);
-	
-	fd = open(hash_file_path, O_RDWR | O_CREAT, 777);
-	if (fd < 0) log_msg("\nERROR IN OPENING"); 
+	char file_name[strlen(path_copy) - i + 1];
+
+    for (k = 0, j = i + 1; j < strlen(path_copy); j++, k++){
+        char ch = path_copy[j];
+        file_name[k] = ch;
+    }
+    file_name[k] = '\0';
+    char final_file[strlen(final_folder) + strlen(file_name) + 2];
+    strcpy(final_file, final_folder);
+    strcat(final_file, "/");
+    strcat(final_file, file_name);
+    log_msg("\n");
+    log_msg(final_file);
+    
+    fd = open(final_file, O_RDWR | O_CREAT, 777);
+	if (fd < 0) log_msg("\nERROR IN OPENING");
 	write(fd, hash, strlen(hash));
-    log_msg("-- Finished hashing --");
 }
 
 int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
