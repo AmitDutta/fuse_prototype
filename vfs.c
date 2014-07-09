@@ -48,6 +48,150 @@
 #include <sys/stat.h>
 
 struct vfs_state *vfs_data;
+
+struct entry_s {
+char *key;
+char *value;
+struct entry_s *next;
+};
+
+typedef struct entry_s entry_t;
+
+
+struct hashtable_s {
+int size;
+struct entry_s **table;	
+};
+
+typedef struct hashtable_s hashtable_t;
+hashtable_t *hashtable;
+
+/* Create a new hashtable. */
+hashtable_t *ht_create( int size ) {
+
+hashtable_t *hashtable = NULL;
+int i;
+
+if( size < 1 ) return NULL;
+
+/* Allocate the table itself. */
+if( ( hashtable = malloc( sizeof( hashtable_t ) ) ) == NULL ) {
+return NULL;
+}
+
+/* Allocate pointers to the head nodes. */
+if( ( hashtable->table = malloc( sizeof( entry_t * ) * size ) ) == NULL ) {
+return NULL;
+}
+for( i = 0; i < size; i++ ) {
+hashtable->table[i] = NULL;
+}
+
+hashtable->size = size;
+
+return hashtable;	
+}
+
+/* Hash a string for a particular hash table. */
+int ht_hash( hashtable_t *hashtable, char *key ) {
+
+unsigned long int hashval;
+int i = 0;
+
+/* Convert our string to an integer */
+while( hashval < ULONG_MAX && i < strlen( key ) ) {
+hashval = hashval << 8;
+hashval += key[ i ];
+i++;
+}
+
+return hashval % hashtable->size;
+}
+
+/* Create a key-value pair. */
+entry_t *ht_newpair( char *key, char *value ) {
+entry_t *newpair;
+
+if( ( newpair = malloc( sizeof( entry_t ) ) ) == NULL ) {
+return NULL;
+}
+
+if( ( newpair->key = strdup( key ) ) == NULL ) {
+return NULL;
+}
+
+if( ( newpair->value = strdup( value ) ) == NULL ) {
+return NULL;
+}
+
+newpair->next = NULL;
+
+return newpair;
+}
+
+/* Insert a key-value pair into a hash table. */
+void ht_set( hashtable_t *hashtable, char *key, char *value ) {
+int bin = 0;
+entry_t *newpair = NULL;
+entry_t *next = NULL;
+entry_t *last = NULL;
+
+bin = ht_hash( hashtable, key );
+
+next = hashtable->table[ bin ];
+
+while( next != NULL && next->key != NULL && strcmp( key, next->key ) > 0 ) {
+last = next;
+next = next->next;
+}
+
+/* There's already a pair.  Let's replace that string. */
+if( next != NULL && next->key != NULL && strcmp( key, next->key ) == 0 ) {
+
+free( next->value );
+next->value = strdup( value );
+
+/* Nope, could't find it.  Time to grow a pair. */
+} else {
+newpair = ht_newpair( key, value );
+
+/* We're at the start of the linked list in this bin. */
+if( next == hashtable->table[ bin ] ) {
+newpair->next = next;
+hashtable->table[ bin ] = newpair;
+/* We're at the end of the linked list in this bin. */
+} else if ( next == NULL ) {
+last->next = newpair;
+/* We're in the middle of the list. */
+} else  {
+newpair->next = next;
+last->next = newpair;
+}
+}
+}
+
+/* Retrieve a key-value pair from a hash table. */
+char *ht_get( hashtable_t *hashtable, char *key ) {
+int bin = 0;
+entry_t *pair;
+
+bin = ht_hash( hashtable, key );
+
+/* Step through the bin, looking for our value. */
+pair = hashtable->table[ bin ];
+while( pair != NULL && pair->key != NULL && strcmp( key, pair->key ) > 0 ) {
+pair = pair->next;
+}
+
+/* Did we actually find anything? */
+if( pair == NULL || pair->key == NULL || strcmp( key, pair->key ) != 0 ) {
+return NULL;
+
+} else {
+return pair->value;
+}
+}
+
 // Report errors to logfile and give -errno to caller
 static int vfs_error(char *str)
 {
@@ -386,6 +530,54 @@ int vfs_open(const char *path, struct fuse_file_info *fi)
     return retstat;
 }
 
+
+char * substr(char * s, int x, int y)
+{
+    char * ret = malloc(strlen(s) + 1);
+    char * p = ret;
+    char * q = &s[x];
+
+    while(x  < y)
+    {
+        *p++ = *q++;
+        x ++;
+    }
+
+    *p++ = '\0';
+
+    return ret;
+}
+
+char* get_md5_sum_formatted(char* md) {
+	char* str = malloc((sizeof(char) * (MD5_DIGEST_LENGTH*2)) + 1);
+	int i,j;
+	for(i=0,j=0; i <MD5_DIGEST_LENGTH; i++) {
+		char ch[3];
+		sprintf(ch,"%02x",md[i]);
+		str[j++] = ch[0];
+		str[j++] = ch[1];
+    }
+    str[j] = '\0';
+    return str;
+}
+
+int check_hash(const char *encrypted, const char *path) {
+	char result[MD5_DIGEST_LENGTH];
+	log_msg("-- In chech_hash --\n");
+	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
+	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + 1];
+	strcpy(path_copy, vfs_data->rootdir);
+	strcat(path_copy, path);
+	char* hash = get_md5_sum_formatted(result);
+	if(ht_get( hashtable, hash ) == NULL){
+		log_msg(" \n--- Not found entry--- ");
+		return 0;
+	}else{
+		log_msg(" \n--- Found entry--- ");
+		return 1;
+	}
+}
+
 /** Read data from an open file
  *
  * Read should return exactly the number of bytes requested except
@@ -404,36 +596,87 @@ int vfs_open(const char *path, struct fuse_file_info *fi)
 // returned by read.
 int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int i, retstat = 0;
+    int i, j, k, retstat = 0;
     
     log_msg("\nvfs_read(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
+	    
     retstat = pread(fi->fh, buf, size, offset);
-    for (i = 0; i < size; ++i){
-		buf[i] = buf[i] - 5;
+    if (retstat < 0){
+		retstat = vfs_error("vfs_read read");
+		return retstat;
 	}
-    if (retstat < 0)
-	retstat = vfs_error("vfs_read read");
+    // Generate the hash
+    char result[MD5_DIGEST_LENGTH] = {'\0'};
+    MD5((unsigned char*) buf, sizeof(buf), result);
+    char* hash = get_md5_sum_formatted((unsigned char*) result);
     
+    // Read hash from file
+    char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash") + 1];
+	strcpy(path_copy, vfs_data->rootdir);
+	strcat(path_copy, path);
+	strcat(path_copy, "_hash");
+	log_msg(path_copy);
+	// Get file Name
+    for (i = strlen(path_copy); i >= 0; i--){
+        if (path_copy[i] == '/') break;
+    }
+    char *folder = substr(path_copy, 0, i+1);
+    char final_folder[strlen(folder) + strlen(".hash") + 1];
+    strcpy(final_folder, folder);
+    strcat(final_folder, ".hash");
+    char *file_name = substr(path_copy, i + 1, strlen(path_copy));
+    char final_file[strlen(final_folder) + strlen(file_name) + 2];
+    strcpy(final_file, final_folder);
+    strcat(final_file, "/");
+    strcat(final_file, file_name);
+    log_msg("\nFinal file path:");
+    
+    // Read from hash file
+    FILE *stream;
+    char *contents;
+    int fileSize = 0;
+
+    //Open the stream. Note "b" to avoid DOS/UNIX new line conversion.
+    stream = fopen(final_file, "rb");
+
+    //Seek to the end of the file to determine the file size
+    fseek(stream, 0L, SEEK_END);
+    fileSize = ftell(stream);
+    fseek(stream, 0L, SEEK_SET);
+
+    //Allocate enough memory (add 1 for the \0, since fread won't add it)
+    contents = malloc(fileSize+1);
+
+    //Read the file 
+    size_t size1=fread(contents,1,fileSize,stream);
+    contents[size1]=0; // Add terminating zero.
+
+    //Print it again for debugging
+    log_msg("%s", contents);
+
+    //Close the file
+    fclose(stream);
+    log_msg("\nGenerated: ");
+    log_msg(hash);
+    log_msg("\nRead: ");
+    log_msg(contents);
+    log_msg("\n");
+    if (strcmp(hash, contents) == 0){
+		for (i = 0; i < size; ++i){
+			buf[i] = buf[i] - 5;
+		}
+	}else{
+		log_msg("\nHash did not match\n");	
+		retstat = vfs_error("vfs_read read");
+	}
     return retstat;
 }
 
-char* get_md5_sum_formatted(char* md) {
-	char* str = malloc(sizeof(char) * (MD5_DIGEST_LENGTH*2));
-	int i,j;
-	for(i=0,j=0; i <MD5_DIGEST_LENGTH; i++) {
-		char ch[3];
-		sprintf(ch,"%02x",md[i]);
-		str[j++] = ch[0];
-		str[j++] = ch[1];
-    }
-    return str;
-}
 
 void write_hash(const char *encrypted, const char * path){
 	int fd;
-	char result[MD5_DIGEST_LENGTH];
-	log_msg("-- Inside write_hash --\n");
+	char result[MD5_DIGEST_LENGTH] = {'\0'};
 	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
 	char path_copy[strlen(path) + strlen(vfs_data->rootdir) + strlen("_hash") + 1];
 	strcpy(path_copy, vfs_data->rootdir);
@@ -443,42 +686,30 @@ void write_hash(const char *encrypted, const char * path){
 	
 	char* hash = get_md5_sum_formatted(result);
 	log_msg(hash);
-	
-	
 	//create hash directory if not exists
 	int i,j,k;
     for (i = strlen(path_copy); i >= 0; i--){
         if (path_copy[i] == '/') break;
     }
-    char folder[i + 1];
-    for (j = 0; j <= i; j++) {
-    char ch = path_copy[j];
-    folder[j] = ch;
-    }
-    folder[j] = '\0';
+    char *folder = substr(path_copy, 0, i+1);
     char final_folder[strlen(folder) + strlen(".hash") + 1];
     strcpy(final_folder, folder);
     strcat(final_folder, ".hash");
+	
 	struct stat st = {0};
 	if (stat(final_folder, &st) == -1) {
 		mkdir(final_folder, 0777);
 	}
-	char file_name[strlen(path_copy) - i + 1];
-
-    for (k = 0, j = i + 1; j < strlen(path_copy); j++, k++){
-        char ch = path_copy[j];
-        file_name[k] = ch;
-    }
-    file_name[k] = '\0';
+    char *file_name = substr(path_copy, i + 1, strlen(path_copy));
     char final_file[strlen(final_folder) + strlen(file_name) + 2];
     strcpy(final_file, final_folder);
     strcat(final_file, "/");
     strcat(final_file, file_name);
-    log_msg("\n");
+    log_msg("\nFinal file path:");
     log_msg(final_file);
     
     fd = open(final_file, O_RDWR | O_CREAT, 777);
-	if (fd < 0) log_msg("\nERROR IN OPENING");
+	if (fd < 0) log_msg("\nError is opening hash file.");
 	write(fd, hash, strlen(hash));
 }
 
@@ -501,43 +732,26 @@ int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
     retstat = pwrite(fi->fh, encrypted, size, offset);
     if (retstat < 0)
 	retstat = vfs_error("vfs_write pwrite");
+	
+	// Dedup
+	log_msg("Log for Dedup Start\n");
+	char result[MD5_DIGEST_LENGTH] = {'\0'};
+	MD5((unsigned char*) encrypted, sizeof(encrypted), result);
+	char file_path[strlen(path) + strlen(vfs_data->rootdir) + 1];
+	strcpy(file_path, vfs_data->rootdir);
+	strcat(file_path, path);
+	char* hash = get_md5_sum_formatted(result);
+	if(check_hash(encrypted,path) == 0){
+		ht_set( hashtable, hash, file_path );
+	}
+	
+	log_msg(ht_get( hashtable, hash )); 
+	log_msg("\nLog for Dedup End\n");
+	// Dedup
+	
 	write_hash(encrypted, path);
     return retstat;
 }
-
-/** Write data to an open file
- *
- * Write should return exactly the number of bytes requested
- * except on error.  An exception to this is when the 'direct_io'
- * mount option is specified (see read operation).
- *
- * Changed in version 2.2
- */
-// As  with read(), the documentation above is inconsistent with the
-// documentation for the write() system call.
-/*int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
-	     struct fuse_file_info *fi)
-{
-    int i,retstat = 0;
-    
-    log_msg("\nvfs_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
-	    path, buf, size, offset, fi);
-	
-    char *encrypted = malloc( sizeof(char) * (size) + 1);
-    for (i = 0; i < size; i++){
-		encrypted[i] = buf[i] + 5;
-    }
-    encrypted[i] = '\0';
-    // no need to get fpath on this one, since I work from fi->fh not the path
-    log_fi(fi);
-	
-    retstat = pwrite(fi->fh, encrypted, size, offset);
-    if (retstat < 0)
-	retstat = vfs_error("vfs_write pwrite");
-    int hash_written = vfs_write_hash(encrypted, path);
-    if (hash_written < 0) vfs_error("Hash writing failed");
-    return retstat;
-}*/
 
 /** Get file system statistics
  *
@@ -1076,6 +1290,7 @@ void vfs_usage()
 int main(int argc, char *argv[])
 {
     int fuse_stat;
+    hashtable = ht_create( 65536 );
     
     // bbfs doesn't do any access checking on its own (the comment
     // blocks in fuse.h mention some of the functions that need
