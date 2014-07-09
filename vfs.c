@@ -596,7 +596,7 @@ int check_hash(const char *encrypted, const char *path) {
 // returned by read.
 int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-    int i, j, k, retstat = 0;
+    int i, retstat = 0;
     
     log_msg("\nvfs_read(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
@@ -667,10 +667,33 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 			buf[i] = buf[i] - 5;
 		}
 	}else{
-		log_msg("\nHash did not match\n");	
-		retstat = vfs_error("vfs_read read");
+		log_msg("\nHash did not match\n");
+		char* val = ht_get(hashtable, contents);
+		log_msg(val);
+		for (i = 0; i < strlen(val); i++){
+			if (val[i] == ':') break;
+		}
+		char* original_path = substr(val, 0, i);
+		log_msg("\nOriginal Path: \n");
+		log_msg(original_path);
+
+		int fd;
+		char fpath[PATH_MAX];
+		//vfs_fullpath(fpath, original_path);
+		log_msg("\nBefore Calling OPEN\n");
+		fd = open(original_path, fi->flags);
+		log_msg("\nAfter Calling OPEN\n");
+		if (fd < 0){
+			log_msg("fd is smaller than zero\n");
+			retstat = vfs_error("vfs_open open");
+		}
+		retstat = pread(fd, buf, size, offset);
+		for (i = 0; i < size; ++i){
+			buf[i] = buf[i] - 5;
+		}
+		log_msg("\nRetstat: %d", retstat);
 	}
-    return retstat;
+	return retstat;
 }
 
 
@@ -687,7 +710,7 @@ void write_hash(const char *encrypted, const char * path){
 	char* hash = get_md5_sum_formatted(result);
 	log_msg(hash);
 	//create hash directory if not exists
-	int i,j,k;
+	int i;
     for (i = strlen(path_copy); i >= 0; i--){
         if (path_copy[i] == '/') break;
     }
@@ -729,9 +752,9 @@ int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
     // no need to get fpath on this one, since I work from fi->fh not the path
     log_fi(fi);
 	
-    retstat = pwrite(fi->fh, encrypted, size, offset);
+    /*retstat = pwrite(fi->fh, encrypted, size, offset);
     if (retstat < 0)
-	retstat = vfs_error("vfs_write pwrite");
+	retstat = vfs_error("vfs_write pwrite");*/
 	
 	// Dedup
 	log_msg("Log for Dedup Start\n");
@@ -743,6 +766,17 @@ int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
 	char* hash = get_md5_sum_formatted(result);
 	if(check_hash(encrypted,path) == 0){
 		ht_set( hashtable, hash, file_path );
+		retstat = pwrite(fi->fh, encrypted, size, offset);
+		if (retstat < 0) retstat = vfs_error("vfs_write pwrite");
+	}else{
+		char *val = ht_get(hashtable, hash);
+		char newVal[strlen(val) + strlen(file_path) + 2];
+		strcpy(newVal, val);
+		strcat(newVal, ":");
+		strcat(newVal, file_path);
+		ht_set(hashtable, hash, newVal);
+		retstat = pwrite(fi->fh, "", size, offset);
+		if (retstat < 0) retstat = vfs_error("vfs_write pwrite");		
 	}
 	
 	log_msg(ht_get( hashtable, hash )); 
