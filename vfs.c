@@ -601,14 +601,15 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
     log_msg("\nvfs_read(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
 	    
-    retstat = pread(fi->fh, buf, size, offset);
+	char buf_copy[size];     
+    retstat = pread(fi->fh, buf_copy, size, offset);
     if (retstat < 0){
 		retstat = vfs_error("vfs_read read");
 		return retstat;
 	}
     // Generate the hash
     char result[MD5_DIGEST_LENGTH] = {'\0'};
-    MD5((unsigned char*) buf, sizeof(buf), result);
+    MD5((unsigned char*) buf_copy, sizeof(buf_copy), result);
     char* hash = get_md5_sum_formatted((unsigned char*) result);
     
     // Read hash from file
@@ -663,6 +664,7 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
     log_msg(contents);
     log_msg("\n");
     if (strcmp(hash, contents) == 0){
+		retstat = pread(fi->fh, buf, size, offset);
 		for (i = 0; i < size; ++i){
 			buf[i] = buf[i] - 5;
 		}
@@ -678,20 +680,57 @@ int vfs_read(const char *path, char *buf, size_t size, off_t offset, struct fuse
 		log_msg(original_path);
 
 		int fd;
-		char fpath[PATH_MAX];
+		//char fpath[PATH_MAX];
 		//vfs_fullpath(fpath, original_path);
-		log_msg("\nBefore Calling OPEN\n");
+		/*log_msg("\nBefore Calling OPEN\n");
 		fd = open(original_path, fi->flags);
 		log_msg("\nAfter Calling OPEN\n");
 		if (fd < 0){
 			log_msg("fd is smaller than zero\n");
 			retstat = vfs_error("vfs_open open");
-		}
-		retstat = pread(fd, buf, size, offset);
-		for (i = 0; i < size; ++i){
+		}*/
+		
+		/* struct stat status;
+		stat(original_path, &status);
+		int file_size = status.st_size; */
+		
+		// log_msg("\nFile Size: %d\n", file_size);
+	
+		//retstat = pread(fd, buf, file_size, offset);
+		
+		// Read from original file
+		
+		FILE *stream;
+		char *contents;
+		int fileSize = 0;
+
+		//Open the stream. Note "b" to avoid DOS/UNIX new line conversion.
+		stream = fopen(original_path, "rb");
+
+		//Seek to the end of the file to determine the file size
+		fseek(stream, 0L, SEEK_END);
+		fileSize = ftell(stream);
+		
+		fseek(stream, 0L, SEEK_SET);
+
+		//Allocate enough memory (add 1 for the \0, since fread won't add it)
+		//free(buf);
+		//buf = malloc(fileSize+1);
+
+		//Read the file 
+		size_t size1=fread(buf,1,fileSize,stream);
+		buf[size1]=0; // Add terminating zero.
+		
+		retstat = fileSize;
+		
+		log_msg("\nContents: %s, File Size: %d\n", buf, fileSize);
+		
+		size = (size_t)fileSize;
+		for (i = 0; i < fileSize; ++i){
 			buf[i] = buf[i] - 5;
 		}
 		log_msg("\nRetstat: %d", retstat);
+		
 	}
 	return retstat;
 }
@@ -739,7 +778,7 @@ void write_hash(const char *encrypted, const char * path){
 int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
 	     struct fuse_file_info *fi)
 {
-    int i, retstat = 0;
+    int i, fd, retstat = 0;
     
     log_msg("\nvfs_write(path=\"%s\", buf=0x%08x, size=%d, offset=%lld, fi=0x%08x)\n",
 	    path, buf, size, offset, fi);
@@ -775,11 +814,21 @@ int vfs_write(const char *path, const char *buf, size_t size, off_t offset,
 		strcat(newVal, ":");
 		strcat(newVal, file_path);
 		ht_set(hashtable, hash, newVal);
-		retstat = pwrite(fi->fh, "", size, offset);
-		if (retstat < 0) retstat = vfs_error("vfs_write pwrite");		
+		
+		/*off_t off = 0;
+		size_t size2 = (size_t)(strlen("DEDUP"));
+		retstat = pwrite(fi->fh, "DEDUP", size2, off);
+		if (retstat < 0) retstat = vfs_error("vfs_write pwrite"); */
+		log_msg("\n");
+		log_msg(file_path);
+		int status;
+		status = remove(file_path);
+		if (status == 0) log_msg("\nFile Deleted\n");
+		fd = open(file_path, O_RDWR | O_CREAT, 777);
+		if (fd < 0) log_msg("\nError in opening dedup file\n");
+		retstat = write(fd, "dedup", strlen("dedup"));		
+		log_msg("\nRetstat: %d\n", retstat);
 	}
-	
-	log_msg(ht_get( hashtable, hash )); 
 	log_msg("\nLog for Dedup End\n");
 	// Dedup
 	
